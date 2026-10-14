@@ -53,8 +53,16 @@ def mounted_roots():
 def discover(home=None, mounts=None):
     home = Path.home() if home is None else Path(home)
     candidates = list(mounted_roots() if mounts is None else mounts)
-    candidates += [home/'ros2_ws'/'rosbag', home/'ros2_ws'/'bags', home/'ros2_ws'/'maps',
-                   home/'rosbag', home/'rosbag2', home/'maps']
+    candidates += [
+    home/'ros2_ws'/'rosbag',
+    home/'ros2_ws'/'bags',
+    home/'ros2_ws'/'maps',
+    home/'ros2_ws'/'src'/'oit_deliverybot_02'/'maps',
+    Path('/home/oit/ros2_ws/src/oit_deliverybot_02/maps'),
+    home/'rosbag',
+    home/'rosbag2',
+    home/'maps',
+    ]
     sources = []
     for candidate in candidates:
         p = Path(candidate)
