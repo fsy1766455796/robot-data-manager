@@ -299,11 +299,6 @@ def main():
     parser.add_argument('--no-auto',action='store_true',help='Disable automatic discovery')
     parser.add_argument('--open-browser',action='store_true')
     args=parser.parse_args()
-    data_home = Path(os.environ.get('XDG_DATA_HOME', str(Path.home()/'.local'/'share')))
-    if sys.platform == 'darwin':
-        data_home = Path.home()/'Library'/'Application Support'
-    demo=data_home/'robot-data-manager'/'demo-data'
-    make_demo(demo)
     explicit=[]
     for writable, roots in [(False,args.root),(True,args.manage_root)]:
         for root in roots:
@@ -317,7 +312,7 @@ def main():
     def get_sources():
         auto=[] if args.no_auto else discover()
         auto=[s for s in auto if not any(within(Path(s['path']),Path(e['path'])) or within(Path(e['path']),Path(s['path'])) for e in explicit)]
-        return explicit+auto+[{'id':'demo','name':'デモ · サンプルデータ','path':str(demo),'writable':True}]
+        return explicit+auto
     app=create_app([], discover_sources=get_sources)
     url=f'http://127.0.0.1:{args.port}'
     print(f'Open {url} — discovered drives are read-only',flush=True)

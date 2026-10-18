@@ -2,7 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from discovery import discover, has_data
-from app import create_app
+from app import create_app, main
+from unittest.mock import patch
 
 class DiscoveryTests(unittest.TestCase):
     def test_arbitrary_drive_name_and_readonly(self):
@@ -21,6 +22,19 @@ class DiscoveryTests(unittest.TestCase):
             self.assertFalse(has_data(disk))
             (disk/'a').mkdir(); (disk/'a'/'metadata.yaml').touch()
             self.assertTrue(has_data(disk)); self.assertFalse(has_data(disk,max_depth=0))
+    def test_startup_without_data_does_not_generate_demo(self):
+        built=[]
+        def build(*args, **kwargs):
+            application=create_app(*args, **kwargs)
+            built.append(application)
+            return application
+        with patch('sys.argv',['app.py','--no-auto']), patch('app.create_app',side_effect=build), patch('app.Flask.run'), patch('app.make_demo') as demo:
+            main()
+        demo.assert_not_called()
+        result=built[0].test_client().get('/api/catalog').get_json()
+        self.assertEqual(result['sources'],[])
+        self.assertEqual(result['items'],[])
+
     def test_refresh_discovers_attach_and_detach(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); state=[]
