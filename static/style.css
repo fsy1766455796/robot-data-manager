@@ -10,3 +10,5 @@
 #image-open{display:block;cursor:zoom-in}.image-open-hint{text-align:center;color:var(--muted);font-size:11px;margin:12px 0 0}
 
 .path-open{display:block;width:100%;text-align:left;border:1px solid var(--line);color:var(--green);cursor:pointer;overflow-wrap:anywhere}.path-open:hover{text-decoration:underline}.path-open span{display:inline-block;margin-left:12px;font-size:12px}
+
+.copy-location{border-bottom:1px solid var(--line);padding:10px 0}.copy-location small{margin-right:16px;color:var(--muted)}

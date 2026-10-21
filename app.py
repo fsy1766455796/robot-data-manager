@@ -75,6 +75,35 @@ def make_demo(root):
             {'topic_metadata':{'name':'/scan','type':'sensor_msgs/msg/LaserScan'},'message_count':1200},
             {'topic_metadata':{'name':'/odom','type':'nav_msgs/msg/Odometry'},'message_count':2400}]}}))
 
+def mark_map_copies(items):
+    """Only collapse copy-named paths when their PGM bytes actually match."""
+    candidates = {}
+    for item in items.values():
+        item.pop('display_group', None)
+        if item['kind'] != 'map':
+            continue
+        normalized = re.sub(r'\s*[（(](?:コピー|copy)(?:\s*\d+)?[）)]', '',
+                            item['relative_path'], flags=re.IGNORECASE)
+        candidates.setdefault((item['source'], normalized, item['bytes']), []).append(item)
+    for entries in candidates.values():
+        if len(entries) < 2:
+            continue
+        matching = {}
+        for item in entries:
+            try:
+                digest = hashlib.sha256()
+                with Path(item['path']).open('rb') as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                        digest.update(chunk)
+                matching.setdefault(digest.hexdigest(), []).append(item)
+            except OSError:
+                continue
+        for digest, copies in matching.items():
+            if len(copies) > 1:
+                key = min(x['id'] for x in copies)
+                for item in copies:
+                    item['display_group'] = key
+
 def open_in_file_manager(path):
     """Reveal a catalog item using the server computer's desktop file manager."""
     folder = path if path.is_dir() else path.parent
@@ -226,6 +255,7 @@ def create_app(sources, discover_sources=None):
                     except Exception as e:
                         entry['warnings'].append(str(e))
                     items[ident]=entry; paths[ident]=(p,source)
+            mark_map_copies(items)
             return list(items.values())
 
     def safe_mutation(source,path):
