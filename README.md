@@ -3,9 +3,7 @@
 ```sh
 git clone https://github.com/fsy1766455796/robot-data-manager.git
 cd robot-data-manager
-bash start.sh \
-  --manage-root "$HOME/ros2_ws/maps" \
-  --manage-root "$HOME/ros2_ws/rosbag"
+bash start.sh --manage-root "$HOME/ros2_ws/maps" --manage-root "$HOME/ros2_ws/rosbag"
 ```
 
 自動検出されないフォルダーは、パスを指定して起動してください。
