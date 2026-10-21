@@ -46,7 +46,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(self.post('/api/restore',records[0]).status_code,200)
         self.assertEqual(before,self.digest(self.rw))
     def test_symlink_escape(self):
-        x=self.item('rw','campus'); (Path(x['path'])/'outside').symlink_to(self.ro,target_is_directory=True)
+        x=self.item('rw','campus'); (Path(x['path']).parent/'outside').symlink_to(self.ro,target_is_directory=True)
         self.assertEqual(self.post('/api/trash',{'id':x['id']}).status_code,403)
         (self.rw/'linked').symlink_to(self.ro,target_is_directory=True)
         self.post('/api/refresh',{})
@@ -54,10 +54,10 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue(next(s for s in c['sources'] if s['id']=='rw')['warnings'])
     def test_restore_conflict_no_overwrite(self):
         x=self.item('rw','campus'); self.post('/api/trash',{'id':x['id']})
-        Path(x['path']).mkdir(); (Path(x['path'])/'keep.txt').write_text('keep')
+        Path(x['path']).parent.mkdir(); (Path(x['path']).parent/'keep.txt').write_text('keep')
         rec=self.client.get('/api/trash').get_json()['items'][0]
         self.assertEqual(self.post('/api/restore',rec).status_code,409)
-        self.assertEqual((Path(x['path'])/'keep.txt').read_text(),'keep')
+        self.assertEqual((Path(x['path']).parent/'keep.txt').read_text(),'keep')
     def test_missing_source_and_malformed_yaml(self):
         p=self.rw/'bags'/'bad'; p.mkdir(); (p/'metadata.yaml').write_text('bad: [')
         self.post('/api/refresh',{}); self.assertTrue(self.item('rw','bad')['warnings'])

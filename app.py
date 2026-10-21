@@ -10,7 +10,7 @@ from flask import Flask, jsonify, request, send_file, abort
 
 BASE = Path(__file__).resolve().parent
 JST = timezone(timedelta(hours=9))
-IMAGE_EXT = {'.png', '.pgm', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'}
+IMAGE_EXT = {'.pgm'}
 BAG_EXT = {'.mcap', '.db3', '.bag'}
 SKIP = {'System Volume Information', '$RECYCLE.BIN'}
 
@@ -76,7 +76,7 @@ def create_app(sources, discover_sources=None):
     app.config['MAX_CONTENT_LENGTH'] = 32768
     token = secrets.token_urlsafe(32)
     lock = threading.RLock()
-    items, paths, image_paths = {}, {}, {}
+    items, paths, image_paths, delete_paths = {}, {}, {}, {}
     source_map = {s['id']:s for s in sources}
 
     def scan():
@@ -85,12 +85,11 @@ def create_app(sources, discover_sources=None):
                 sources[:] = discover_sources()
                 source_map.clear()
                 source_map.update({s['id']:s for s in sources})
-            items.clear(); paths.clear(); image_paths.clear()
+            items.clear(); paths.clear(); image_paths.clear(); delete_paths.clear()
             for source in sources:
                 root = Path(source['path']); source['available'] = root.is_dir(); source['warnings'] = []
                 if not source['available']: continue
                 groups = []
-                all_paths = []
                 def onerror(e): source['warnings'].append(str(e))
                 for d, dirs, files in os.walk(root, followlinks=False, onerror=onerror):
                     p = Path(d)
@@ -99,23 +98,50 @@ def create_app(sources, discover_sources=None):
                             source['warnings'].append('Skipped symbolic link: '+str((p/n).relative_to(root)))
                     dirs[:] = [n for n in dirs if not excluded(n) and not (p/n).is_symlink()]
                     fs = [p/n for n in files if not excluded(n) and not (p/n).is_symlink()]
-                    all_paths.extend(fs)
                     images = sorted([f for f in fs if f.suffix.lower() in IMAGE_EXT], key=lambda f:(f.name!='map.pgm',f.suffix!='.pgm',f.name))
                     bagfiles = [f for f in fs if f.suffix.lower() in BAG_EXT]
-                    if (p/'metadata.yaml') in fs or bagfiles:
+                    if (p/'metadata.yaml') in fs:
                         groups.append((p,'bag',fs,[]))
-                    elif images or any(f.suffix in {'.pcd','.ply','.simplemap','.mm','.las'} for f in fs):
-                        groups.append((p,'map',fs,images))
+                    else:
+                        for bagfile in bagfiles:
+                            groups.append((p,'bag',[bagfile],[]))
+                    for img in images:
+                        groups.append((p,'map',fs,[img]))
                 for p,kind,fs,imgs in groups:
-                    rel = str(p.relative_to(root))
+                    standalone = kind == 'bag' and len(fs) == 1 and fs[0].suffix.lower() in BAG_EXT
+                    item_path = imgs[0] if kind == 'map' else fs[0] if standalone else p
+                    rel = str(item_path.relative_to(root))
                     ident = hashlib.sha256((source['id']+':'+rel).encode()).hexdigest()[:24]
-                    entry = dict(id=ident,source=source['id'],name=p.name,path=str(p),relative_path=rel,
+                    entry = dict(id=ident,source=source['id'],name=(p.name+' / '+imgs[0].stem if kind == 'map' else fs[0].name if standalone else p.name),path=str(item_path),relative_path=rel,
                                  kind=kind,date=path_date(rel),date_basis='folder',bytes=0,topics=[],images=[],warnings=[],
                                  pixels=None,width=None,height=None,resolution=None,duration=None,messages=None,format='',
                                  readonly=not source['writable'],can_trash=False)
+                    parts = list(p.relative_to(root).parts)
+                    markers = {'maps', 'map'} if kind == 'map' else {'bags', 'bag', 'rosbag', 'rosbags', 'rosbag2'}
+                    for index, part in enumerate(parts):
+                        if part.lower() in markers:
+                            parts = parts[index+1:]
+                            break
+                    if kind == 'bag' and not standalone and parts:
+                        parts = parts[:-1]
+                    entry['category'] = parts[0] if parts else '未分類'
+                    entry['can_delete'] = False
                     try:
-                        group_files = [f for f in all_paths if f==p or p in f.parents]
-                        entry['bytes'] = sum(f.stat().st_size for f in group_files)
+                        group_files = [f for f in fs if f.suffix.lower() in BAG_EXT or f.name == 'metadata.yaml'] if kind == 'bag' else list(imgs)
+                        if kind == 'map':
+                            for config in fs:
+                                if config.suffix.lower() in {'.yaml', '.yml'}:
+                                    try:
+                                        if (p/str(load_yaml(config).get('image', ''))).resolve() == imgs[0].resolve():
+                                            group_files.append(config)
+                                    except Exception:
+                                        pass
+                        data_files = [f for f in group_files if f.suffix.lower() in (BAG_EXT if kind == 'bag' else IMAGE_EXT)]
+                        entry['bytes'] = sum(f.stat().st_size for f in data_files)
+                        delete_paths[ident] = group_files
+                        entry['delete_files'] = [str(f.relative_to(root)) for f in group_files]
+                        entry['can_delete'] = bool(source['writable'] and group_files)
+
                         entry['file_count'] = len(group_files)
                         entry['files'] = [{'name':str(f.relative_to(p)),'bytes':f.stat().st_size} for f in group_files]
                         if kind == 'bag':
@@ -143,7 +169,7 @@ def create_app(sources, discover_sources=None):
                             if not any(f.suffix.lower() in BAG_EXT for f in group_files):
                                 entry['warnings'].append('Metadata only; no recording data file found.')
                         else:
-                            entry['format'] = '3D / screenshots' if any(f.suffix in {'.simplemap','.mm','.las','.pcd','.ply'} for f in fs) else '2D map'
+                            entry['format'] = 'PGM map'
                             for f in fs:
                                 if f.suffix in {'.yaml','.yml'}:
                                     try:
@@ -166,7 +192,7 @@ def create_app(sources, discover_sources=None):
                                     if i==0: entry.update(width=w,height=h,pixels=w*h)
                                 except Exception as e: entry['warnings'].append(img.name+': '+str(e))
                         # Root folders and folders nesting another dataset cannot be moved as one item.
-                        entry['can_trash'] = bool(source['writable'] and p!=root and not any(q!=p and p in q.parents for q,_,_,_ in groups))
+                        entry['can_trash'] = bool(source['writable'] and p!=root and sum(q == p for q,_,_,_ in groups) == 1 and not any(q!=p and p in q.parents for q,_,_,_ in groups))
                     except Exception as e:
                         entry['warnings'].append(str(e))
                     items[ident]=entry; paths[ident]=(p,source)
@@ -237,6 +263,28 @@ def create_app(sources, discover_sources=None):
                     im.thumbnail((2200,2200) if request.args.get('full') else (600,450))
                 out=BytesIO(); im.save(out,format='PNG'); out.seek(0)
         return send_file(out,mimetype='image/png')
+
+    @app.post('/api/delete')
+    def delete():
+        with lock:
+            ident = (request.get_json() or {}).get('id')
+            if ident not in paths:
+                abort(404)
+            _, source = paths[ident]
+            targets = delete_paths.get(ident, [])
+            if not items[ident]['can_delete'] or not targets:
+                abort(403, description='This source is read-only.')
+            # Validate the entire selection before removing any file.
+            for target in targets:
+                safe_mutation(source, target)
+                if not target.is_file():
+                    abort(409, description='Files changed; refresh before deleting.')
+            try:
+                for target in targets:
+                    target.unlink()
+            finally:
+                scan()
+            return jsonify(ok=True)
 
     @app.post('/api/trash')
     def trash():
