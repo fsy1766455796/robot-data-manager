@@ -63,13 +63,16 @@ class CatalogTests(unittest.TestCase):
         self.post('/api/refresh',{}); self.assertTrue(self.item('rw','bad')['warnings'])
         missing=create_app([{'id':'missing','name':'missing','path':str(self.root/'missing'),'writable':False}])
         self.assertFalse(missing.test_client().get('/api/catalog').get_json()['sources'][0]['available'])
-    def test_ssd_path_cannot_be_enabled(self):
-        app=create_app([{'id':'ssd','name':'SSD','path':'/Volumes/catalog-test-volume-not-mounted','writable':True}])
-        # Test the mutation policy independently of whether a drive is attached.
+    def test_mounted_drive_policy_allows_managed_files(self):
+        app=create_app([])
         with app.test_request_context('/'):
             safe=next(c.cell_contents for c in app.view_functions['trash'].__closure__ if callable(c.cell_contents) and getattr(c.cell_contents,'__name__','')=='safe_mutation')
-            with self.assertRaises(Exception) as cm:
-                safe({'path':'/Volumes/catalog-test-volume-not-mounted','writable':True},Path('/Volumes/catalog-test-volume-not-mounted/anything'))
-            self.assertEqual(cm.exception.code,403)
+            from unittest.mock import patch
+            for mount in ['/Volumes/SSD', '/media/oit/SSD', '/run/media/oit/SSD', '/mnt/SSD']:
+                with patch.object(Path, 'is_dir', return_value=True):
+                    safe({'path':mount,'writable':True}, Path(mount)/'maps'/'map.pgm')
+                with self.assertRaises(Exception) as cm:
+                    safe({'path':mount,'writable':False}, Path(mount)/'maps'/'map.pgm')
+                self.assertEqual(cm.exception.code,403)
 
 if __name__=='__main__': unittest.main(verbosity=2)

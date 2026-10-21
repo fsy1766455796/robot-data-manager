@@ -1,4 +1,4 @@
-"""Bounded, read-only discovery of removable drives and common ROS data folders."""
+"""Bounded discovery of removable drives and common ROS data folders."""
 import hashlib
 import os
 import sys
@@ -73,5 +73,5 @@ def discover(home=None, mounts=None):
             continue
         if has_data(p):
             sources.append({'id':'auto-'+hashlib.sha256(str(p).encode()).hexdigest()[:12],
-                            'name':p.name, 'path':str(p), 'writable':False})
+                            'name':p.name, 'path':str(p), 'writable':os.access(p, os.W_OK | os.X_OK)})
     return sources

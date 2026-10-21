@@ -200,7 +200,7 @@ def create_app(sources, discover_sources=None):
 
     def safe_mutation(source,path):
         root=Path(source['path'])
-        if not source['writable'] or within(root,Path('/Volumes')) or within(path,Path('/Volumes')):
+        if not source['writable']:
             abort(403,description='This source is read-only.')
         if path==root or not within(path,root) or path.is_symlink(): abort(403)
         for part in [path,*path.parents]:
@@ -342,7 +342,7 @@ def create_app(sources, discover_sources=None):
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--root',action='append',default=[],help='Additional read-only data directory')
-    parser.add_argument('--manage-root',action='append',default=[],help='Explicit opt-in to reversible quarantine on a LOCAL directory; /Volumes is always denied')
+    parser.add_argument('--manage-root',action='append',default=[],help='Additional manageable data directory (automatically discovered directories are manageable by default)')
     parser.add_argument('--port',type=int,default=8765)
     parser.add_argument('--no-auto',action='store_true',help='Disable automatic discovery')
     parser.add_argument('--open-browser',action='store_true')
@@ -352,8 +352,8 @@ def main():
         for root in roots:
             p=Path(root).expanduser().resolve()
             if not p.is_dir(): parser.error('Directory does not exist: '+str(p))
-            if writable and (any(within(p,Path(b)) for b in ['/Volumes','/media','/run/media','/mnt']) or p in [Path('/'),Path.home()]):
-                parser.error('Use a dedicated local folder for management. Removable drives stay read-only.')
+            if writable and p in [Path('/'),Path.home()]:
+                parser.error('Use a dedicated data folder or mounted drive for management.')
             if any(within(p,Path(s['path'])) or within(Path(s['path']),p) for s in explicit):
                 parser.error('Sources must not overlap.')
             explicit.append({'id':'source'+str(len(explicit)),'name':p.name,'path':str(p),'writable':writable})
@@ -363,7 +363,7 @@ def main():
         return explicit+auto
     app=create_app([], discover_sources=get_sources)
     url=f'http://127.0.0.1:{args.port}'
-    print(f'Open {url} — discovered drives are read-only',flush=True)
+    print(f'Open {url} — automatically discovered data supports deletion when filesystem permissions allow',flush=True)
     if args.open_browser:
         threading.Timer(1.5, lambda:webbrowser.open(url)).start()
     app.run(host='127.0.0.1',port=args.port,debug=False,threaded=True)
