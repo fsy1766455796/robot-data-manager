@@ -2,7 +2,7 @@
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
-import argparse, hashlib, json, os, re, secrets, shutil, threading, uuid, warnings, sys, webbrowser
+import argparse, hashlib, json, os, re, secrets, shutil, threading, uuid, warnings, sys, webbrowser, subprocess
 from discovery import discover
 import yaml
 from PIL import Image, ImageDraw
@@ -74,6 +74,32 @@ def make_demo(root):
         'relative_file_paths':['demo_0.mcap'], 'topics_with_message_count':[
             {'topic_metadata':{'name':'/scan','type':'sensor_msgs/msg/LaserScan'},'message_count':1200},
             {'topic_metadata':{'name':'/odom','type':'nav_msgs/msg/Odometry'},'message_count':2400}]}}))
+
+def open_in_file_manager(path):
+    """Reveal a catalog item using the server computer's desktop file manager."""
+    folder = path if path.is_dir() else path.parent
+    if sys.platform == 'darwin':
+        command = ['open', str(folder)] if path.is_dir() else ['open', '-R', str(path)]
+    elif sys.platform == 'win32':
+        command = ['explorer.exe', str(folder)] if path.is_dir() else ['explorer.exe', '/select,', str(path)]
+    else:
+        if path.is_file():
+            try:
+                subprocess.run([
+                    'dbus-send', '--session', '--dest=org.freedesktop.FileManager1',
+                    '--type=method_call', '--print-reply', '/org/freedesktop/FileManager1',
+                    'org.freedesktop.FileManager1.ShowItems',
+                    'array:string:'+path.as_uri(), 'string:'
+                ], check=True, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except (OSError, subprocess.SubprocessError):
+                pass
+        command = ['xdg-open', str(folder)]
+    try:
+        subprocess.run(command, check=True, timeout=10,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError('ファイルを開けません。デスクトップ環境とファイルマネージャーを確認してください。') from error
 
 def create_app(sources, discover_sources=None):
     app = Flask(__name__, static_folder='static')
@@ -269,6 +295,26 @@ def create_app(sources, discover_sources=None):
                     im=im.convert('L')
                 out=BytesIO(); im.save(out,format='PNG'); out.seek(0)
         return send_file(out,mimetype='image/png')
+
+    @app.post('/api/open-folder')
+    def open_folder():
+        with lock:
+            ident = (request.get_json() or {}).get('id')
+            if ident not in items:
+                abort(404)
+            path = Path(items[ident]['path'])
+            root = Path(paths[ident][1]['path'])
+            if not within(path, root):
+                abort(403)
+            for part in [path, *path.parents]:
+                if part.is_symlink():
+                    abort(403)
+                if part == root:
+                    break
+            if not root.is_dir() or not path.exists():
+                abort(404, description='データが見つかりません。再スキャンしてください。')
+        open_in_file_manager(path)
+        return jsonify(ok=True)
 
     @app.post('/api/delete')
     def delete():
