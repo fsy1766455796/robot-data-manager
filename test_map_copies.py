@@ -51,3 +51,35 @@ class MapCopyTests(unittest.TestCase):
         self.assertEqual(len(items),2)
         self.assertEqual(len({x['display_group'] for x in items}),1)
         self.assertEqual({x['bytes'] for x in items},{self.original.stat().st_size,copy.stat().st_size})
+    def test_timestamp_directory_groups_versioned_pgm_names(self):
+        folder=self.root/'maps'/'glim'/'20250919_192900'; folder.mkdir()
+        for name in ['map.pgm','map.20260919201553pgm','map.20260919201554.pgm','other.pgm']:
+            (folder/name).write_bytes(b'P5\n1 1\n255\n\x00')
+        (folder/'map.png').write_bytes(b'ignore')
+        self.refresh()
+        versions=[x for x in self.catalog()['items'] if '20250919_192900' in x['path']]
+        self.assertEqual(len(versions),4)
+        self.assertEqual(len({x['display_group'] for x in versions}),1)
+        for x in versions:
+            self.assertEqual(x['bytes'],Path(x['path']).stat().st_size)
+            self.assertEqual(len(x['images']),1)
+            self.assertEqual(self.client.get('/api/image/'+x['images'][0]['id']).status_code,200)
+        original_group=next(x['display_group'] for x in self.catalog()['items'] if '20260919-135337' in x['path'])
+        self.assertNotEqual(versions[0]['display_group'],original_group)
+        version=next(x for x in versions if x['path'].endswith('map.20260919201553pgm'))
+        self.assertEqual(self.client.post('/api/delete',json={'id':version['id']},headers=self.token).status_code,200)
+        self.assertTrue((folder/'map.pgm').exists())
+
+    def test_discovery_finds_timestamp_extension(self):
+        from discovery import has_data
+        folder=self.root/'version-only';folder.mkdir()
+        (folder/'map.20260919201553pgm').write_bytes(b'P5\n1 1\n255\n\xff')
+        self.assertTrue(has_data(folder))
+
+    def test_direct_timestamp_source_groups_versions(self):
+        folder=self.root/'20250919_192900';folder.mkdir()
+        for name in ['map.pgm','map.20260919201553pgm']:
+            (folder/name).write_bytes(b'P5\n1 1\n255\n\xff')
+        client=create_app([{'id':'time','name':'Time','path':str(folder),'writable':True}]).test_client()
+        items=client.get('/api/catalog').get_json()['items']
+        self.assertEqual(len({x['display_group'] for x in items}),1)

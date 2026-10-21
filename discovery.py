@@ -1,8 +1,14 @@
 """Bounded discovery of removable drives and common ROS data folders."""
 import hashlib
 import os
+import re
 import sys
 from pathlib import Path
+
+
+def is_pgm(path):
+    # Some map exporters append a timestamp without the final extension dot.
+    return bool(re.search(r'\.(?:\d+)?pgm$', Path(path).name, re.IGNORECASE))
 
 
 def has_data(root, max_depth=5, max_dirs=1500):
@@ -18,7 +24,7 @@ def has_data(root, max_depth=5, max_dirs=1500):
                        and not (p/d).is_symlink()]
             if len(p.relative_to(root).parts) >= max_depth:
                 dirs[:] = []
-            if any(n == 'metadata.yaml' or (not n.startswith('.') and Path(n).suffix.lower() in {'.pgm', '.mcap', '.db3', '.bag'}) for n in files):
+            if any(n == 'metadata.yaml' or (not n.startswith('.') and (is_pgm(n) or Path(n).suffix.lower() in {'.mcap', '.db3', '.bag'})) for n in files):
                 return True
     except OSError:
         pass

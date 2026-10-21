@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 import argparse, hashlib, json, os, re, secrets, shutil, threading, uuid, warnings, sys, webbrowser, subprocess
-from discovery import discover
+from discovery import discover, is_pgm
 import yaml
 from PIL import Image, ImageDraw
 from flask import Flask, jsonify, request, send_file, abort
@@ -14,7 +14,6 @@ Image.MAX_IMAGE_PIXELS = 200_000_000
 
 BASE = Path(__file__).resolve().parent
 JST = timezone(timedelta(hours=9))
-IMAGE_EXT = {'.pgm'}
 BAG_EXT = {'.mcap', '.db3', '.bag'}
 SKIP = {'System Volume Information', '$RECYCLE.BIN'}
 
@@ -76,7 +75,7 @@ def make_demo(root):
             {'topic_metadata':{'name':'/odom','type':'nav_msgs/msg/Odometry'},'message_count':2400}]}}))
 
 def mark_map_copies(items):
-    """Group original/copy names in the same relative location, preserving every file."""
+    """Group maps by timestamp directory, retaining all independently managed locations."""
     candidates = {}
     for item in items.values():
         item.pop('display_group', None)
@@ -84,7 +83,18 @@ def mark_map_copies(items):
             continue
         normalized = re.sub(r'\s*[（(]\s*(?:コピー|copy)(?:\s*\d+)?\s*[）)]', '',
                             item['relative_path'], flags=re.IGNORECASE)
-        candidates.setdefault((item['source'], normalized), []).append(item)
+        parts = Path(normalized).parts
+        key = ('name', normalized)
+        for index, part in enumerate(parts[:-1]):
+            if re.fullmatch(r'20\d{6}[_-]\d{6}', part):
+                key = ('time', *parts[:index+1])
+                break
+        else:
+            parent_name = re.sub(r'\s*[（(](?:コピー|copy)(?:\s*\d+)?[）)]', '',
+                                 Path(item['path']).parent.name, flags=re.IGNORECASE)
+            if len(parts) == 1 and re.fullmatch(r'20\d{6}[_-]\d{6}', parent_name):
+                key = ('time', '.')
+        candidates.setdefault((item['source'], key), []).append(item)
     for copies in candidates.values():
         if len(copies) > 1:
             key = min(x['id'] for x in copies)
@@ -144,7 +154,7 @@ def create_app(sources, discover_sources=None):
                             source['warnings'].append('Skipped symbolic link: '+str((p/n).relative_to(root)))
                     dirs[:] = [n for n in dirs if not excluded(n) and not (p/n).is_symlink()]
                     fs = [p/n for n in files if not excluded(n) and not (p/n).is_symlink()]
-                    images = sorted([f for f in fs if f.suffix.lower() in IMAGE_EXT], key=lambda f:(f.name!='map.pgm',f.suffix!='.pgm',f.name))
+                    images = sorted([f for f in fs if is_pgm(f)], key=lambda f:(f.name!='map.pgm',f.suffix!='.pgm',f.name))
                     bagfiles = [f for f in fs if f.suffix.lower() in BAG_EXT]
                     if (p/'metadata.yaml') in fs:
                         groups.append((p,'bag',fs,[]))
@@ -182,7 +192,7 @@ def create_app(sources, discover_sources=None):
                                             group_files.append(config)
                                     except Exception:
                                         pass
-                        data_files = [f for f in group_files if f.suffix.lower() in (BAG_EXT if kind == 'bag' else IMAGE_EXT)]
+                        data_files = [f for f in group_files if (f.suffix.lower() in BAG_EXT if kind == 'bag' else is_pgm(f))]
                         entry['bytes'] = sum(f.stat().st_size for f in data_files)
                         delete_paths[ident] = group_files
                         entry['delete_files'] = [str(f.relative_to(root)) for f in group_files]
