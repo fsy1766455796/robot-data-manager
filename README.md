@@ -25,7 +25,7 @@ py bootstrap.py --root "E:/"
 ブラウザーで http://127.0.0.1:8765 を開いてください。
 
 
-
+```sh
 PROJECT_DIR="$(pwd)"
 DESKTOP_DIR="$(xdg-user-dir DESKTOP)"
 
@@ -43,3 +43,4 @@ Categories=Development;
 EOF
 
 chmod +x "$DESKTOP_DIR/Robot Data Manager.desktop"
+```
