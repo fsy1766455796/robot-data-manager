@@ -30,9 +30,9 @@ class MapCopyTests(unittest.TestCase):
         self.assertTrue(self.original.exists()); self.assertFalse(self.copy.exists())
         remaining=self.catalog()['items']; self.assertEqual(len(remaining),1)
         self.assertNotIn('display_group',remaining[0])
-    def test_same_name_different_content_stays_separate(self):
+    def test_copy_name_groups_even_when_contents_differ(self):
         self.copy.write_bytes(b'P5\n1 1\n255\n\x00'); self.refresh()
-        self.assertTrue(all('display_group' not in x for x in self.catalog()['items']))
+        self.assertEqual(len({x['display_group'] for x in self.catalog()['items']}),1)
     def test_different_categories_stay_separate(self):
         target=self.root/'maps'/'slam_toolbo'/'20260919-135337（コピー）'/'map.pgm'
         target.parent.mkdir(parents=True); self.copy.rename(target); self.refresh()
@@ -41,3 +41,13 @@ class MapCopyTests(unittest.TestCase):
         for suffix in [' (copy)', '（コピー 2）']:
             (self.original.parent/('map'+suffix+'.pgm')).write_bytes(self.original.read_bytes())
         self.refresh(); self.assertEqual(len({x['display_group'] for x in self.catalog()['items']}),1)
+
+    def test_same_directory_copy_filename_with_different_size(self):
+        self.copy.unlink()
+        copy=self.original.parent/'map（コピー）.pgm'
+        copy.write_bytes(b'P5\n# Different export header\n1 1\n255\n\x00')
+        self.refresh()
+        items=self.catalog()['items']
+        self.assertEqual(len(items),2)
+        self.assertEqual(len({x['display_group'] for x in items}),1)
+        self.assertEqual({x['bytes'] for x in items},{self.original.stat().st_size,copy.stat().st_size})
