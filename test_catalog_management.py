@@ -79,3 +79,27 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(x['bytes'],3)
         self.assertEqual(self.post('/api/delete',{'id':x['id']}).status_code,200)
         self.assertEqual((folder/'two.bag').read_bytes(),b'two-two')
+
+    def test_large_map_header_supported_but_finite_limit_retained(self):
+        large=self.root/'maps'/'glim'/'large.pgm'
+        # Header inspection must not allocate the full 163 MP image.
+        large.write_bytes(b'P5\n12777 12777\n255\n')
+        oversized=self.root/'maps'/'glim'/'oversized.pgm'
+        oversized.write_bytes(b'P5\n15000 15000\n255\n')
+        self.post('/api/refresh',{})
+        items=self.catalog()['items']
+        accepted=next(x for x in items if x['relative_path'].endswith('/large.pgm'))
+        self.assertEqual(accepted['pixels'],163251729)
+        self.assertEqual(accepted['warnings'],[])
+        rejected=next(x for x in items if x['relative_path'].endswith('/oversized.pgm'))
+        self.assertTrue(rejected['warnings'])
+
+    def test_grayscale_preview_and_original(self):
+        from io import BytesIO
+        x=next(x for x in self.catalog()['items'] if x['kind']=='map')
+        for query in ['', '?full=1', '?original=1']:
+            response=self.client.get('/api/image/'+x['images'][0]['id']+query)
+            self.assertEqual(response.status_code,200)
+            with Image.open(BytesIO(response.data)) as image:
+                self.assertEqual(image.mode,'L')
+                self.assertEqual(image.size,(10,20))

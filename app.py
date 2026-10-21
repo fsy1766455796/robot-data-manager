@@ -8,6 +8,10 @@ import yaml
 from PIL import Image, ImageDraw
 from flask import Flask, jsonify, request, send_file, abort
 
+# Large ROS occupancy grids commonly exceed Pillow's default 89 MP limit.
+# Keep a finite cap; warnings above it are still treated as errors.
+Image.MAX_IMAGE_PIXELS = 200_000_000
+
 BASE = Path(__file__).resolve().parent
 JST = timezone(timedelta(hours=9))
 IMAGE_EXT = {'.pgm'}
@@ -258,9 +262,11 @@ def create_app(sources, discover_sources=None):
         with warnings.catch_warnings():
             warnings.simplefilter('error',Image.DecompressionBombWarning)
             with Image.open(p) as im:
-                im=im.convert('RGB')
                 if request.args.get('original') != '1':
                     im.thumbnail((2200,2200) if request.args.get('full') else (600,450))
+                # Preserve grayscale for full-size PGM maps and avoid a full-size RGB copy.
+                if im.mode not in {'1', 'L', 'I;16', 'RGB', 'RGBA'}:
+                    im=im.convert('L')
                 out=BytesIO(); im.save(out,format='PNG'); out.seek(0)
         return send_file(out,mimetype='image/png')
 
