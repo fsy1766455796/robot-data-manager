@@ -11,6 +11,14 @@ def is_pgm(path):
     return bool(re.search(r'\.(?:\d+)?pgm$', Path(path).name, re.IGNORECASE))
 
 
+def is_timestamp_package(path, root):
+    path, root = Path(path), Path(root)
+    if path == root or not re.fullmatch(r'20\d{6}[_-]\d{6}(?:\s*[（(](?:コピー|copy)(?:\s*\d+)?[）)])?', path.name, re.IGNORECASE):
+        return False
+    parts = [root.name, *path.relative_to(root).parts[:-1]]
+    return any(name.lower() in {'map', 'maps'} for name in parts)
+
+
 def has_data(root, max_depth=5, max_dirs=1500):
     count = 0
     try:
@@ -24,6 +32,8 @@ def has_data(root, max_depth=5, max_dirs=1500):
                        and not (p/d).is_symlink()]
             if len(p.relative_to(root).parts) >= max_depth:
                 dirs[:] = []
+            if is_timestamp_package(p, root):
+                return True
             if any(n == 'metadata.yaml' or (not n.startswith('.') and (is_pgm(n) or Path(n).suffix.lower() in {'.mcap', '.db3', '.bag'})) for n in files):
                 return True
     except OSError:

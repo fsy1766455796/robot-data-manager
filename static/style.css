@@ -12,3 +12,5 @@
 .path-open{display:block;width:100%;text-align:left;border:1px solid var(--line);color:var(--green);cursor:pointer;overflow-wrap:anywhere}.path-open:hover{text-decoration:underline}.path-open span{display:inline-block;margin-left:12px;font-size:12px}
 
 .copy-location{border-bottom:1px solid var(--line);padding:10px 0}.copy-location small{margin-right:16px;color:var(--muted)}
+
+#cleanup-dialog .dialog-body{padding:0 24px 24px}#cleanup-list{max-height:45vh;overflow:auto}#cleanup-list .full-path{overflow-wrap:anywhere}

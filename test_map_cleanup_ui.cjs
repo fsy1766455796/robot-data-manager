@@ -1,0 +1,10 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const nodes=new Map();
+const document={getElementById(id){if(!nodes.has(id))nodes.set(id,{innerHTML:'',textContent:'',style:{},showModal(){this.open=true},close(){this.open=false}});return nodes.get(id)}};
+const context={document,assert};vm.createContext(context);
+const script=fs.readFileSync('static/app.js','utf8');
+const start=script.indexOf('async function previewCleanup()'),end=script.indexOf("$('quarantine').onclick=");
+vm.runInContext(`const $=id=>document.getElementById(id);let cleanupPlan=null,selectedSource='data';const bytes=n=>n+' B';const esc=s=>String(s).replace(/</g,'&lt;');let calls=[],messages=[],errors=[];let fail=false;async function api(path,body){calls.push({path,body});if(fail)throw Error('changed');return path.endsWith('/preview')?{plan:'p',bytes:42,items:[{path:'maps/<test>',bytes:42}]}:{removed:1}}async function load(){}function toast(s){messages.push(s)}function showError(e){errors.push(e.message)}\n`+script.slice(start,end),context);
+(async()=>{await vm.runInContext(`previewCleanup()`,context);vm.runInContext(`assert.equal(calls.length,1);assert.equal(calls[0].path,'/api/cleanup/preview');assert.equal($('cleanup-dialog').open,true);assert.ok($('cleanup-list').innerHTML.includes('&lt;test>'));assert.ok($('cleanup-summary').textContent.includes('42 B'));assert.equal($('cleanup-confirm').disabled,false);`,context);
+await vm.runInContext(`executeCleanup()`,context);vm.runInContext(`assert.equal(calls[1].path,'/api/cleanup');assert.equal(calls[1].body.plan,'p');assert.equal($('cleanup-dialog').open,false);assert.equal(cleanupPlan,null);assert.equal(messages.length,1);`,context);
+await vm.runInContext(`previewCleanup()`,context);vm.runInContext(`fail=true`,context);await vm.runInContext(`executeCleanup()`,context);vm.runInContext(`assert.equal(cleanupPlan,null);assert.equal(errors[0],'changed');assert.equal($('cleanup-dialog').open,false);`,context);console.log('Cleanup preview, escaped folder list, explicit execution and stale-plan error UI passed.');})().catch(e=>{console.error(e);process.exitCode=1});

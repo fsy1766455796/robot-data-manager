@@ -1,5 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);
+let cleanupPlan=null;
 let catalog={items:[],sources:[]}, tab='map', current=null, selectedSource=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const bytes=n=>{if(n==null)return '—';if(n<1000)return n+' B';const u=['KB','MB','GB','TB'];let i=-1;do{n/=1000;i++}while(n>=1000&&i<3);return n.toLocaleString('ja-JP',{maximumFractionDigits:2})+' '+u[i]};
@@ -27,6 +28,7 @@ function card(x){const im=x.images[0];return `<article class="card" data-id="${x
 function bag(x){return `<article class="card bag" data-id="${x.id}"><div class="bag-icon">◉</div><div><h3>${esc(x.name)}</h3><p class="path">${esc(x.relative_path)}</p><div class="bag-meta"><span>${esc(x.date||'日付不明')}</span><span>${duration(x.duration)}</span><span>${x.topics.length} トピック</span><span>${count(x.messages)} メッセージ</span></div><div class="topic-pills">${x.topics.slice(0,3).map(t=>`<span>${esc(t.name)}</span>`).join('')}${x.topics.length>3?`<span>+${x.topics.length-3}</span>`:''}</div></div><div class="bag-side"><strong>${bytes(x.bytes)}</strong><small>${esc(x.format||'形式不明')}</small>${x.warnings.length?'<span class="badge warm">要確認</span>':''}<button class="button detail-open" type="button">詳細を見る</button>${deleteButton(x)}</div></article>`}
 function filtered(items){const q=$('search').value.trim().toLowerCase();return items.filter(x=>{if($('category').value&&x.category!==$('category').value)return false;if(q&&!`${x.name} ${x.relative_path} ${(x.copies||[]).map(c=>c.path).join(' ')} ${x.topics.map(t=>t.name+' '+t.type).join(' ')}`.toLowerCase().includes(q))return false;return true}).sort((a,b)=>{const mode=$('sort').value;if(mode==='name')return a.name.localeCompare(b.name);let av,bv,dir=mode.endsWith('desc')?-1:1;if(mode.startsWith('pixels')){av=a.pixels;bv=b.pixels}else if(mode.startsWith('size')){av=a.bytes;bv=b.bytes}else{av=a.date;bv=b.date}if(av==null)return bv==null?0:1;if(bv==null)return -1;return (av<bv?-1:av>bv?1:0)*dir})}
 function renderNoSource(){
+ $('cleanup').hidden=true;
  document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
  $('page-title').textContent=tab==='map'?'地図カタログ':tab==='bag'?'rosbag カタログ':'一時保管・復元';
  $('page-description').textContent='データソースを確認してください。';
@@ -40,7 +42,7 @@ function renderNoSource(){
  $('content').className='grid';$('content').innerHTML='<div class="empty">データが見つかりません。<br>実際の地図・rosbag のフォルダーを指定してください。<br><code>bash start.sh --root "/path/to/data"</code><br>接続後は「再スキャン」で再検出できます。</div>';
  current=null;$('quarantine').hidden=true;if($('detail').open)$('detail').close();
 }
-async function render(){const s=source();if(!s){renderNoSource();return;}document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));$('source-path').textContent=s.path;$('mode').textContent=s.writable?'削除・復元に対応':'読み取り専用';$('notice').textContent=s.writable?'地図の「削除」は保存先フォルダー全体（中の全ファイル・サブフォルダー）を完全削除します。一時保管・復元も利用できます。':'読み取り専用です。--root の指定またはドライブ・フォルダーの書き込み権限を確認してください。';
+async function render(){const s=source();if(!s){renderNoSource();return;}document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));$('cleanup').hidden=tab!=='map'||!s.writable||!s.available;$('source-path').textContent=s.path;$('mode').textContent=s.writable?'削除・復元に対応':'読み取り専用';$('notice').textContent=s.writable?'地図の「削除」は保存先フォルダー全体（中の全ファイル・サブフォルダー）を完全削除します。一時保管・復元も利用できます。':'読み取り専用です。--root の指定またはドライブ・フォルダーの書き込み権限を確認してください。';
 $('errors').innerHTML=s.warnings.length?`<div class="warning">${s.warnings.slice(0,4).map(v=>esc(warning(v))).join('<br>')}${s.warnings.length>4?`<br>ほか ${s.warnings.length-4} 件`:''}</div>`:'';
 const all=displayItems(catalog.items.filter(x=>x.source===selectedSource));$('map-count').textContent=all.filter(x=>x.kind==='map').length;$('bag-count').textContent=all.filter(x=>x.kind==='bag').length;
 $('page-title').textContent=tab==='map'?'地図カタログ':tab==='bag'?'rosbag カタログ':'一時保管・復元';$('page-description').textContent=tab==='map'?'地図を見比べて、必要なデータを見つける。':tab==='bag'?'記録されたトピックと収録時間を、ひと目で確認。':'移動したフォルダーを、元の場所へ戻す。';
@@ -57,7 +59,29 @@ if(x.images.length){html+=`<div class="image-stage"><a id="image-open" href="/vi
 html+='<div class="detail-facts">'+fact('日付',x.date||'不明')+fact('日付の根拠',x.date_basis.startsWith('metadata')?'記録メタデータ（JST）':'フォルダー名（参考）')+fact('パス分類',x.category)+fact(x.kind==='map'?'PGM ファイル容量':'記録データ容量',bytes(x.bytes));if(x.kind==='bag'){html+=fact('収録時間',duration(x.duration))+fact('メッセージ数',count(x.messages))+fact('保存形式',x.format||'不明')}else{html+=fact('画像サイズ',x.width?`${count(x.width)} × ${count(x.height)} px`:'なし')+fact('総画素数',count(x.pixels))+fact('地図解像度',x.resolution?`${x.resolution} m/px`:'不明')}html+='</div>';
 html+=x.warnings.map(w=>`<div class="warning">${esc(warning(w))}</div>`).join('');if(x.kind==='bag'){html+=`<h3 class="section-title">トピック一覧 · ${x.topics.length} 件</h3><table><thead><tr><th>トピック</th><th>メッセージ型</th><th>件数</th></tr></thead><tbody>${x.topics.map(t=>`<tr><td class="code">${esc(t.name)}</td><td class="code">${esc(t.type)}</td><td>${count(t.count)}</td></tr>`).join('')}</tbody></table>`}
 html+=`<details><summary class="section-title">関連ファイル · ${x.file_count||0} 件</summary><table><thead><tr><th>ファイル</th><th>容量</th></tr></thead><tbody>${(x.files||[]).map(f=>`<tr><td class="code">${esc(f.name)}</td><td>${bytes(f.bytes)}</td></tr>`).join('')}</tbody></table></details>`;$('detail-body').innerHTML=html;document.querySelectorAll('[data-open-folder]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await api('/api/open-folder',{id:b.dataset.openFolder});toast('ファイルマネージャーで開きました。')}catch(e){alert(e.message)}finally{b.disabled=false}});document.querySelectorAll('#detail-body .delete-item').forEach(b=>b.onclick=()=>deleteItem(b.closest('.copy-location').querySelector('[data-open-folder]').dataset.openFolder,b));document.querySelectorAll('[data-image]').forEach(b=>b.onclick=()=>{$('large-image').src='/api/image/'+b.dataset.image+'?full=1';$('large-image').alt=b.dataset.name;$('image-open').href='/viewer/'+b.dataset.image});$('detail-policy').textContent=x.readonly?'読み取り専用：このデータへの変更操作はできません。':x.copies?'同じ日時の地図・コピーをまとめて表示しています。内容や容量が異なる場合もあります。各保存先を開くか、選択した保存先だけ削除できます。':'関連ファイルを含むフォルダー全体を一時保管します。後で復元できます。';$('quarantine').hidden=!x.can_trash;$('detail').showModal()}
+async function previewCleanup(){
+ const button=$('cleanup');button.disabled=true;cleanupPlan=null;
+ try{
+  const result=await api('/api/cleanup/preview',{source:selectedSource});
+  cleanupPlan=result.plan;
+  $('cleanup-summary').textContent=`${result.items.length} フォルダー・解放予定 ${bytes(result.bytes)}（選択中のソース全体、検索条件は適用されません）`;
+  $('cleanup-list').innerHTML=result.items.length?result.items.map(x=>`<p class="full-path">${esc(x.path)} · ${bytes(x.bytes)}</p>`).join(''):'<p>整理対象はありません。PGM・rosbag・リンクを含むフォルダー、通常の分類フォルダーは残します。</p>';
+  $('cleanup-confirm').disabled=!result.items.length;
+  $('cleanup-dialog').showModal();
+ }catch(e){showError(e)}finally{button.disabled=false}
+}
+async function executeCleanup(){
+ if(!cleanupPlan)return;
+ const button=$('cleanup-confirm');button.disabled=true;
+ try{
+  const result=await api('/api/cleanup',{plan:cleanupPlan});
+  cleanupPlan=null;$('cleanup-dialog').close();await load();toast(`${result.removed} フォルダーを整理しました。`);
+ }catch(e){cleanupPlan=null;$('cleanup-dialog').close();await load();showError(e)}finally{button.disabled=false}
+}
 $('quarantine').onclick=async()=>{if(!current||!current.can_trash)return;if(!confirm(`「${current.name}」を関連ファイルごと一時保管しますか？\n\n${current.path}\n\n後で復元できます。容量は解放されません。`))return;const b=$('quarantine');b.disabled=true;try{await api('/api/trash',{id:current.id});$('detail').close();await load();toast('一時保管しました。復元タブから戻せます。')}catch(e){alert('処理できませんでした：'+e.message)}finally{b.disabled=false}};
 $('close').onclick=()=>$('detail').close();$('detail').addEventListener('click',e=>{if(e.target===$('detail')){const r=$('detail').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('detail').close()}});
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;$('category').value='';render()});$('source').onchange=()=>{selectedSource=$('source').value;$('category').value='';render()};['search','sort','category'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',render));$('refresh').onclick=async()=>{const b=$('refresh');b.disabled=true;b.textContent='スキャン中…';try{await api('/api/refresh',{});await load();toast('一覧を更新しました。')}catch(e){showError(e)}finally{b.disabled=false;b.textContent='↻ 再スキャン'}};
+$('cleanup').onclick=previewCleanup;
+$('cleanup-confirm').onclick=executeCleanup;
+['cleanup-close','cleanup-cancel'].forEach(id=>$(id).onclick=()=>{cleanupPlan=null;$('cleanup-dialog').close()});
 load().catch(showError);

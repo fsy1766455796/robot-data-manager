@@ -2,8 +2,9 @@
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
-import argparse, hashlib, json, os, re, secrets, shutil, threading, uuid, warnings, sys, webbrowser, subprocess
+import argparse, hashlib, json, os, time, re, secrets, shutil, threading, uuid, warnings, sys, webbrowser, subprocess
 from discovery import discover, is_pgm
+from map_cleanup import find_orphans, orphan_snapshot
 import yaml
 from PIL import Image, ImageDraw
 from flask import Flask, jsonify, request, send_file, abort
@@ -134,6 +135,7 @@ def create_app(sources, discover_sources=None):
     lock = threading.RLock()
     items, paths, image_paths, delete_paths = {}, {}, {}, {}
     source_map = {s['id']:s for s in sources}
+    cleanup_plans = {}
 
     def scan():
         with lock:
@@ -347,6 +349,62 @@ def create_app(sources, discover_sources=None):
                 abort(404, description='データが見つかりません。再スキャンしてください。')
         open_in_file_manager(path)
         return jsonify(ok=True)
+
+    @app.post('/api/cleanup/preview')
+    def cleanup_preview():
+        with lock:
+            source = source_map.get((request.get_json() or {}).get('source'))
+            if source is None:
+                abort(404)
+            if not source['writable']:
+                abort(403, description='This source is read-only.')
+            root = Path(source['path'])
+            if not root.is_dir() or root.is_symlink():
+                abort(409, description='Source is unavailable.')
+            candidates = find_orphans(root)
+            # Keep only the latest preview per source, with a bounded lifetime.
+            for key, value in list(cleanup_plans.items()):
+                if value['source'] == source['id'] or time.monotonic() - value['created'] > 900:
+                    del cleanup_plans[key]
+            plan = secrets.token_urlsafe(24)
+            cleanup_plans[plan] = dict(source=source['id'], root=str(root), root_identity=(root.stat().st_dev, root.stat().st_ino), items=candidates, created=time.monotonic())
+            return jsonify(plan=plan, items=[dict(path=x['path'], bytes=x['bytes']) for x in candidates],
+                           bytes=sum(x['bytes'] for x in candidates))
+
+    @app.post('/api/cleanup')
+    def cleanup_execute():
+        with lock:
+            plan = cleanup_plans.pop((request.get_json() or {}).get('plan'), None)
+            if plan is None or time.monotonic() - plan['created'] > 900:
+                abort(409, description='Preview expired; scan again.')
+            source = source_map.get(plan['source'])
+            if source is None or str(source['path']) != plan['root']:
+                abort(409, description='Source changed; scan again.')
+            root = Path(source['path'])
+            if root.is_symlink() or not root.is_dir() or (root.stat().st_dev, root.stat().st_ino) != plan['root_identity']:
+                abort(409, description='Source changed; scan again.')
+            targets = []
+            # Recheck the complete preview before deleting the first folder.
+            for item in plan['items']:
+                path = root/item['path']
+                safe_mutation(source, path)
+                try:
+                    fingerprint, _ = orphan_snapshot(path)
+                except (OSError, ValueError):
+                    abort(409, description='Folders changed; scan again before cleaning.')
+                if fingerprint != item['fingerprint']:
+                    abort(409, description='Folders changed; scan again before cleaning.')
+                targets.append(path)
+            removed = 0
+            try:
+                for path in targets:
+                    shutil.rmtree(path)
+                    removed += 1
+            except OSError as error:
+                abort(409, description=f'Cleaned {removed} folders; cleanup stopped: {error}')
+            finally:
+                scan()
+            return jsonify(ok=True, removed=removed)
 
     @app.post('/api/delete')
     def delete():
