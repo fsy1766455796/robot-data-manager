@@ -68,7 +68,8 @@ class MapCopyTests(unittest.TestCase):
         self.assertNotEqual(versions[0]['display_group'],original_group)
         version=next(x for x in versions if x['path'].endswith('map.20260919201553pgm'))
         self.assertEqual(self.client.post('/api/delete',json={'id':version['id']},headers=self.token).status_code,200)
-        self.assertTrue((folder/'map.pgm').exists())
+        self.assertFalse(folder.exists())
+        self.assertTrue(self.original.exists())
 
     def test_discovery_finds_timestamp_extension(self):
         from discovery import has_data

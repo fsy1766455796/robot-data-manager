@@ -197,6 +197,11 @@ def create_app(sources, discover_sources=None):
                         delete_paths[ident] = group_files
                         entry['delete_files'] = [str(f.relative_to(root)) for f in group_files]
                         entry['can_delete'] = bool(source['writable'] and group_files)
+                        if kind == 'map':
+                            # A map is deleted together with its containing dataset folder.
+                            # Never remove the configured source itself.
+                            entry['delete_directory'] = str(p.relative_to(root))
+                            entry['can_delete'] = bool(source['writable'] and p != root)
 
                         entry['file_count'] = len(group_files)
                         entry['files'] = [{'name':str(f.relative_to(p)),'bytes':f.stat().st_size} for f in group_files]
@@ -349,7 +354,29 @@ def create_app(sources, discover_sources=None):
             ident = (request.get_json() or {}).get('id')
             if ident not in paths:
                 abort(404)
-            _, source = paths[ident]
+            folder, source = paths[ident]
+            if items[ident]['kind'] == 'map':
+                safe_mutation(source, folder)
+                if not items[ident]['can_delete']:
+                    abort(403, description='This map folder cannot be deleted.')
+                if not folder.is_dir():
+                    abort(409, description='Folder changed; refresh before deleting.')
+                # Reject links before any deletion, including hidden descendants.
+                def walk_error(error):
+                    raise error
+                for directory, dirs, files in os.walk(folder, followlinks=False, onerror=walk_error):
+                    for name in dirs + files:
+                        if (Path(directory)/name).is_symlink():
+                            abort(403, description='Dataset contains symbolic links.')
+                for target in delete_paths.get(ident, []):
+                    safe_mutation(source, target)
+                    if not target.is_file():
+                        abort(409, description='Files changed; refresh before deleting.')
+                try:
+                    shutil.rmtree(folder)
+                finally:
+                    scan()
+                return jsonify(ok=True)
             targets = delete_paths.get(ident, [])
             if not items[ident]['can_delete'] or not targets:
                 abort(403, description='This source is read-only.')

@@ -37,12 +37,13 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(x['bytes'], Path(x['path']).stat().st_size)
             self.assertEqual(len(x['images']), 1)
             self.assertEqual(x['resolution'], .05)
-    def test_map_delete_only_selected_pair(self):
+    def test_map_delete_whole_containing_folder(self):
         x = next(x for x in self.catalog()['items'] if x['kind']=='map')
         path = Path(x['path']); before = {p for p in self.root.rglob('*') if p.is_file()}
         self.assertEqual(self.post('/api/delete', {'id': x['id']}).status_code, 200)
         after = {p for p in self.root.rglob('*') if p.is_file()}
-        self.assertEqual(before-after, {path, path.with_suffix('.yaml')})
+        self.assertEqual(before-after, {p for p in before if path.parent in p.parents})
+        self.assertFalse(path.parent.exists())
         self.assertEqual(self.post('/api/delete', {'id': x['id']}).status_code, 404)
     def test_bag_size_delete_excludes_nested_and_unrelated(self):
         x = next(x for x in self.catalog()['items'] if x['name']=='recording')
@@ -67,7 +68,9 @@ class ManagementTests(unittest.TestCase):
         self.post('/api/refresh',{})
         x=next(x for x in self.catalog()['items'] if x['relative_path']=='root.pgm')
         self.assertEqual(x['category'],'未分類')
-        self.assertEqual(self.post('/api/delete',{'id':x['id']}).status_code,200)
+        self.assertFalse(x['can_delete'])
+        self.assertEqual(self.post('/api/delete',{'id':x['id']}).status_code,403)
+        self.assertTrue((self.root/'root.pgm').exists())
         self.assertTrue(self.root.is_dir())
     def test_standalone_bags_remain_independent(self):
         folder=self.root/'bags'/'slam_toolbo'; folder.mkdir()
